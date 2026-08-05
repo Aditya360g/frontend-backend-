@@ -1,0 +1,245 @@
+package com.selfb.backend.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtGrantedAuthoritiesConverter;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.Base64;
+import java.util.List;
+
+@Configuration
+@EnableMethodSecurity
+@EnableConfigurationProperties(
+        JwtProperties.class
+)
+public class SecurityConfig {
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder(12);
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(
+            UserDetailsService userDetailsService,
+            PasswordEncoder passwordEncoder
+    ) {
+        DaoAuthenticationProvider provider =
+                new DaoAuthenticationProvider(
+                        userDetailsService
+                );
+
+        provider.setPasswordEncoder(
+                passwordEncoder
+        );
+
+        return new ProviderManager(provider);
+    }
+
+    @Bean
+    public SecretKey jwtSecretKey(
+            JwtProperties jwtProperties
+    ) {
+        byte[] secretBytes;
+
+        try {
+            secretBytes = Base64
+                    .getDecoder()
+                    .decode(jwtProperties.secret());
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalStateException(
+                    "JWT_SECRET must be a valid Base64 value.",
+                    exception
+            );
+        }
+
+        if (secretBytes.length < 32) {
+            throw new IllegalStateException(
+                    "JWT secret must contain at least 32 bytes."
+            );
+        }
+
+        return new SecretKeySpec(
+                secretBytes,
+                "HmacSHA256"
+        );
+    }
+
+    @Bean
+    public JwtEncoder jwtEncoder(
+            SecretKey jwtSecretKey
+    ) {
+        return NimbusJwtEncoder
+                .withSecretKey(jwtSecretKey)
+                .algorithm(MacAlgorithm.HS256)
+                .build();
+    }
+
+    @Bean
+    public JwtDecoder jwtDecoder(
+            SecretKey jwtSecretKey,
+            JwtProperties jwtProperties
+    ) {
+        NimbusJwtDecoder jwtDecoder =
+                NimbusJwtDecoder
+                        .withSecretKey(jwtSecretKey)
+                        .macAlgorithm(
+                                MacAlgorithm.HS256
+                        )
+                        .build();
+
+        jwtDecoder.setJwtValidator(
+                JwtValidators.createDefaultWithIssuer(
+                        jwtProperties.issuer()
+                )
+        );
+
+        return jwtDecoder;
+    }
+
+    @Bean
+    public JwtAuthenticationConverter
+    jwtAuthenticationConverter() {
+
+        JwtGrantedAuthoritiesConverter
+                authoritiesConverter =
+                new JwtGrantedAuthoritiesConverter();
+
+        authoritiesConverter
+                .setAuthoritiesClaimName("roles");
+
+        authoritiesConverter
+                .setAuthorityPrefix("ROLE_");
+
+        JwtAuthenticationConverter converter =
+                new JwtAuthenticationConverter();
+
+        converter.setJwtGrantedAuthoritiesConverter(
+                authoritiesConverter
+        );
+
+        return converter;
+    }
+
+    @Bean
+    public CorsConfigurationSource
+    corsConfigurationSource(
+            @Value(
+                    "${app.cors.allowed-origins:http://localhost:5173}"
+            )
+            List<String> allowedOrigins
+    ) {
+        CorsConfiguration configuration =
+                new CorsConfiguration();
+
+        configuration.setAllowedOrigins(
+                allowedOrigins
+        );
+
+        configuration.setAllowedMethods(
+                List.of(
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "PATCH",
+                        "DELETE",
+                        "OPTIONS"
+                )
+        );
+
+        configuration.setAllowedHeaders(
+                List.of(
+                        "Authorization",
+                        "Content-Type"
+                )
+        );
+
+        configuration.setExposedHeaders(
+                List.of("Authorization")
+        );
+
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source =
+                new UrlBasedCorsConfigurationSource();
+
+        source.registerCorsConfiguration(
+                "/**",
+                configuration
+        );
+
+        return source;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            JwtAuthenticationConverter
+                    jwtAuthenticationConverter
+    ) throws Exception {
+
+        http
+                .csrf(
+                        AbstractHttpConfigurer::disable
+                )
+
+                .cors(Customizer.withDefaults())
+
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(
+                                SessionCreationPolicy.STATELESS
+                        )
+                )
+
+                .authorizeHttpRequests(authorize ->
+                        authorize
+                                .requestMatchers(
+                                        "/api/v1/health",
+                                        "/api/v1/auth/register",
+                                        "/api/v1/auth/login",
+                                        "/actuator/health"
+                                )
+                                .permitAll()
+
+                                .anyRequest()
+                                .authenticated()
+                )
+
+                .oauth2ResourceServer(oauth2 ->
+                        oauth2.jwt(jwt ->
+                                jwt.jwtAuthenticationConverter(
+                                        jwtAuthenticationConverter
+                                )
+                        )
+                );
+
+        return http.build();
+    }
+}
