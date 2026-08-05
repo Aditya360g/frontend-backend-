@@ -10,6 +10,7 @@ public record UserResponse(
         String email,
         UserRole role,
         boolean enabled,
+        boolean emailVerified,
         String phone,
         String bio,
         Instant createdAt,

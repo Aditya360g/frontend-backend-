@@ -7,6 +7,8 @@ export interface User {
   id: number | string;
   name: string;
   email: string;
+  enabled?: boolean;
+  emailVerified?: boolean;
   role?: UserRole;
   roles?: UserRole[];
   phone?: string | null;

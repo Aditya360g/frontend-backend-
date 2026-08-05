@@ -289,6 +289,7 @@ public class AuthServiceImpl
                 user.getEmail(),
                 user.getRole(),
                 user.isEnabled(),
+                user.isEmailVerified(),
                 user.getPhone(),
                 user.getBio(),
                 user.getCreatedAt(),
